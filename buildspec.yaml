@@ -1,0 +1,51 @@
+version: 0.2
+env: # Create the environment variables
+  variables:
+    AWS_REGION: us-east-1
+    AWS_DYNAMODB_TABLE_PROD: lks-order-production
+    AWS_DYNAMODB_TABLE_TEST: lks-order-testing
+
+phases:
+  install: # install runtime
+    runtime-versions:
+      nodejs: 18
+  pre_build: # You must use this phase for installing dependencies and login into ECR
+    commands: # run your pre-build script here
+      - echo "Install Dependencies and login into ECR"
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - aws configure set aws_access_key_id $aws_access_key_id
+      - aws configure set aws_secret_access_key $aws_secret_access_key
+      - TAG="$(date +%Y-%m-%d.%H.%M.%S).$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | head -c 8)"
+      - ECR_REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:$TAG
+      - echo "AWS_ACCESS_KEY=${AWS_ACCESS_KEY}" >> .env.production
+      - echo "AWS_SECRET_KEY=${AWS_SECRET_KEY}" >> .env.production
+      - echo "AWS_DYNAMODB_TABLE_PROD=${AWS_DYNAMODB_TABLE_PROD}" >> .env.production
+      - echo "AWS_REGION=${AWS_REGION}" >> .env.production
+      - echo "AWS_ACCESS_KEY=${AWS_ACCESS_KEY}" >> .env.testing
+      - echo "AWS_SECRET_KEY=${AWS_SECRET_KEY}" >> .env.testing
+      - echo "AWS_DYNAMODB_TABLE_TEST=${AWS_DYNAMODB_TABLE_TEST}" >> .env.testing
+      - echo "AWS_REGION=${AWS_REGION}" >> .env.testing
+  build: # In This phase you must Run Unit testing and Build an image from Dockerfile
+    commands:
+      - echo "Run unit testing and build docker image"
+      - npm install
+      - npm run test
+      - echo $ECR_REPO
+      - docker build -t $ECR_REPO .
+  post_build: # In this phase you must push the image to ECR and create an image definition
+    commands: # Run your post-build script here
+      - echo "push the image to ECR.."
+      - docker push $ECR_REPO
+      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $ECR_REPO > imagedefinitions.json
+      - printf '{"AWSEBDockerrunVersion":"1","Image":{"Name":"730335425609.dkr.ecr.us-east-1.amazonaws.com/lks-catalog-image:latest"},"Ports":[{"ContainerPort":8000,"HostPort":80}]}' > Dockerrun.aws.json
+      - echo "build complete.."
+
+reports: # Report file
+  test-report:
+    files: report/test-result.xml
+    file-format: JUNITXML
+
+artifacts: # Output artifact will generate build
+  files:
+    - imagedefinitions.json
+    - Dockerrun.aws.json
